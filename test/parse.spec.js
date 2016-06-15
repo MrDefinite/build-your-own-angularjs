@@ -178,8 +178,103 @@ describe("parse", function() {
         expect(fn()).toBeUndefined();
     });
 
+    it('uses locals instead of scope when there is a matching key', function() {
+        var fn = parse('aKey');
+        var scope = {aKey: 42};
+        var locals = {aKey: 43};
+        expect(fn(scope, locals)).toBe(43);
+    });
 
+    it('does not use locals instead of scope when no matching key', function() {
+        var fn = parse('aKey');
+        var scope = {aKey: 42};
+        var locals = {otherKey: 43};
+        expect(fn(scope, locals)).toBe(42);
+    });
 
+    it('uses locals instead of scope when the first part matches', function() {
+        var fn = parse('aKey.anotherKey');
+        var scope = {aKey: {anotherKey: 42}};
+        var locals = {aKey: {}};
+        expect(fn(scope, locals)).toBeUndefined();
+    });
+
+    it('parses a simple computed property access', function() {
+        var fn = parse('aKey["anotherKey"]');
+        expect(fn({aKey: {anotherKey: 42}})).toBe(42);
+    });
+
+    it('parses a computed numeric array access', function() {
+        var fn = parse('anArray[1]');
+        expect(fn({anArray: [1, 2, 3]})).toBe(2);
+    });
+
+    it('parses a computed access with another key as property', function() {
+        var fn = parse('lock[key]');
+        expect(fn({key: 'theKey', lock: {theKey: 42}})).toBe(42);
+    });
+
+    it('parses computed access with another access as property', function() {
+        var fn = parse('lock[keys["aKey"]]');
+        expect(fn({keys: {aKey: 'theKey'}, lock: {theKey: 42}})).toBe(42);
+    });
+
+    it('parses a function call', function() {
+        var fn = parse('aFunction()');
+        expect(fn({aFunction: function() { return 42; }})).toBe(42);
+    });
+
+    it('parses a function call with a single number argument', function() {
+        var fn = parse('aFunction(42)');
+        expect(fn({aFunction: function(n) { return n; }})).toBe(42);
+    });
+
+    it('parses a function call with a single number argument', function() {
+        var fn = parse('aFunction(n)');
+        expect(fn({n: 42, aFunction: function(arg) { return arg; }})).toBe(42);
+    });
+
+    it('parses a function call with a single function call argument', function() {
+        var fn = parse('aFunction(argFn())');
+        expect(fn({
+            argFn: _.constant(42),
+            aFunction: function(arg) { return arg; }
+        })).toBe(42);
+    });
+
+    it('parses a function call with multiple arguments', function() {
+        var fn = parse('aFunction(37, n, argFn())');
+        expect(fn({
+            n: 3,
+            argFn: _.constant(2),
+            aFunction: function(a1, a2, a3) { return a1 + a2 + a3; }
+        })).toBe(42);
+    });
+
+    it('calls methods accessed as computed properties', function() {
+        var scope = {
+            anObject: {
+                aMember: 42,
+                aFunction: function() {
+                    return this.aMember;
+                }
+            }
+        };
+        var fn = parse('anObject["aFunction"]()');
+        expect(fn(scope)).toBe(42);
+    });
+
+    it('calls methods accessed as non-computed properties', function() {
+        var scope = {
+            anObject: {
+            aMember: 42,
+            aFunction: function() {
+                return this.aMember; }
+            }
+        };
+        var fn = parse('anObject.aFunction()');
+        expect(fn(scope)).toBe(42);
+    });
 
 
 

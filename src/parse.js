@@ -16,7 +16,7 @@ Lexer.prototype.lex = function(text) {
             this.readNumber();
         } else if (this.is('\'"')) {
             this.readString(this.ch);
-        } else if (this.is('[],{}:.')) {
+        } else if (this.is('[],{}:.()')) {
             this.tokens.push({
                 text: this.ch
             });
@@ -170,6 +170,7 @@ AST.Property = 'Property';
 AST.Identifier = 'Identifier';
 AST.ThisExpression = 'ThisExpression';
 AST.MemberExpression = 'MemberExpression';
+AST.CallExpression = 'CallExpression';
 
 AST.prototype.ast = function(text) {
     this.tokens = this.lexer.lex(text);
@@ -197,12 +198,31 @@ AST.prototype.primary = function() {
         primary = this.constant();
     }
 
-    while (this.expect('.')) {
-        primary = {
-            type: AST.MemberExpression,
-            object: primary,
-            property: this.identifier()
-        };
+    var next;
+    while ((next = this.expect('.', '[', '('))) {
+        if (next.text === '[') {
+            primary = {
+                type: AST.MemberExpression,
+                object: primary,
+                property: this.primary(),
+                computed: true
+            };
+            this.consume(']');
+        } else if (next.text === '.') {
+            primary = {
+                type: AST.MemberExpression,
+                object: primary,
+                property: this.identifier(),
+                computed: false
+            };
+        } else if (next.text === '(') {
+            primary = {
+                type: AST.CallExpression,
+                callee: primary,
+                arguments: this.parseArguments()
+            };
+            this.consume(')');
+        }
     }
     return primary;
 };
@@ -214,8 +234,8 @@ AST.prototype.constant = function() {
     };
 };
 
-AST.prototype.expect = function(e) {
-    var token = this.peek(e);
+AST.prototype.expect = function(e1, e2, e3, e4) {
+    var token = this.peek(e1, e2, e3, e4);
     if (token) {
         return this.tokens.shift();
     }
@@ -227,6 +247,16 @@ AST.prototype.consume = function(e) {
         throw 'Unexpected. Expecting: ' + e;
     }
     return token;
+};
+
+AST.prototype.parseArguments = function() {
+    var args = [];
+    if (!this.peek(')')) {
+        do {
+            args.push(this.primary());
+        } while (this.expect(','));
+    }
+    return args;
 };
 
 AST.prototype.arrayDeclaration = function() {
@@ -297,10 +327,11 @@ AST.prototype.constants = {
     }
 };
 
-AST.prototype.peek = function(e) {
+AST.prototype.peek = function(e1, e2, e3, e4) {
     if (this.tokens.length > 0) {
         var text = this.tokens[0].text;
-        if (text === e || !e) {
+        if (text === e1 || text === e2 || text === e3 || text === e4 ||
+            (!e1 && !e2 && !e3 && !e4)) {
             return this.tokens[0];
         }
     }
@@ -323,14 +354,14 @@ ASTCompiler.prototype.compile = function(text) {
     };
     this.recurse(ast);
     /* jshint -W054 */
-    return new Function('s',
+    return new Function('s', 'l',
         (this.state.vars.length ?
             'var ' + this.state.vars.join(',') + ';' : '') +
         this.state.body.join(''));
     /* jshint +W054 */
 };
 
-ASTCompiler.prototype.recurse = function(ast) {
+ASTCompiler.prototype.recurse = function(ast, context) {
     var intoId;
     switch (ast.type) {
     case AST.Program:
@@ -355,16 +386,51 @@ ASTCompiler.prototype.recurse = function(ast) {
         return '{' + properties.join(',') + '}';
     case AST.Identifier:
         intoId = this.nextId();
-        this.if_('s', this.assign(intoId, this.nonComputedMember('s', ast.name)));
+        this.if_(this.getHasOwnProperty('l', ast.name),
+            this.assign(intoId, this.nonComputedMember('l', ast.name)));
+        this.if_(this.not(this.getHasOwnProperty('l', ast.name)) + ' && s',
+            this.assign(intoId, this.nonComputedMember('s', ast.name)));
         return intoId;
     case AST.ThisExpression:
         return 's';
     case AST.MemberExpression:
         intoId = this.nextId();
         var left = this.recurse(ast.object);
-        this.if_(left,
-            this.assign(intoId, this.nonComputedMember(left, ast.property.name)));
+        if (context) {
+            context.context = left;
+        }
+        if (ast.computed) {
+            var right = this.recurse(ast.property);
+            this.if_(left,
+                this.assign(intoId, this.computedMember(left, right)));
+            if (context) {
+                context.name = right;
+                context.computed = true;
+            }
+        } else {
+            this.if_(left,
+                this.assign(intoId, this.nonComputedMember(left, ast.property.name)));
+            if (context) {
+                context.name = ast.property.name;
+                context.computed = false;
+            }
+        }
         return intoId;
+    case AST.CallExpression:
+        var callContext = {};
+        var callee = this.recurse(ast.callee, callContext);
+        var self = this;
+        var args = _.map(ast.arguments, function(arg) {
+            return self.recurse(arg);
+        });
+        if (callContext.name) {
+            if (callContext.computed) {
+                callee = this.computedMember(callContext.context, callContext.name);
+            } else {
+                callee = this.nonComputedMember(callContext.context, callContext.name);
+            }
+        }
+        return callee + '&&' + callee + '(' + args.join(',') + ')';
     }
 };
 
@@ -388,6 +454,10 @@ ASTCompiler.prototype.nonComputedMember = function(left, right) {
     return '(' + left + ').' + right;
 };
 
+ASTCompiler.prototype.computedMember = function(left, right) {
+    return '(' + left + ')[' + right + ']';
+};
+
 ASTCompiler.prototype.if_ = function(test, consequent) {
     this.state.body.push('if(', test, '){', consequent, '}');
 };
@@ -400,6 +470,14 @@ ASTCompiler.prototype.nextId = function() {
     var id = 'v' + (this.state.nextId++);
     this.state.vars.push(id);
     return id;
+};
+
+ASTCompiler.prototype.not = function(e) {
+    return '!(' + e + ')';
+};
+
+ASTCompiler.prototype.getHasOwnProperty = function(object, property) {
+    return object + '&&(' + this.escape(property) + ' in ' + object + ')';
 };
 
 
