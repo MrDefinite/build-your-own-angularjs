@@ -11,7 +11,7 @@ module.exports = function(config) {
         files: [
             'node_modules/lodash/lodash.min.js',
             'node_modules/jquery/dist/jquery.min.js',
-             'node_modules/sinon/pkg/sinon.js',
+            'node_modules/sinon/pkg/sinon.js',
             'src/*.js',
             'test/*.js',
             {//Serving source map files for debugging
