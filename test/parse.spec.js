@@ -608,6 +608,75 @@ describe("parse", function () {
         expect(parse('2 + 3 < 6 - 2')()).toBe(false);
     });
 
+    it('parses logical AND', function() {
+        expect(parse('true && true')()).toBe(true);
+        expect(parse('true && false')()).toBe(false);
+    });
+
+    it('parses logical OR', function() {
+        expect(parse('true || true')()).toBe(true);
+        expect(parse('true || false')()).toBe(true);
+        expect(parse('fales || false')()).toBe(false);
+    });
+
+    it('parses multiple ANDs', function() {
+        expect(parse('true && true && true')()).toBe(true);
+        expect(parse('true && true && false')()).toBe(false);
+    });
+
+    it('parses multiple ORs', function() {
+        expect(parse('true || true || true')()).toBe(true);
+        expect(parse('true || true || false')()).toBe(true);
+        expect(parse('false || false || true')()).toBe(true);
+        expect(parse('false || false || false')()).toBe(false);
+    });
+
+    it('short-circuits AND', function() {
+        var invoked;
+        var scope = {fn: function() { invoked = true; }};
+        parse('false && fn()')(scope);
+        expect(invoked).toBeUndefined();
+    });
+
+    it('parses AND with a higher precedence than OR', function() {
+        expect(parse('false && true || true')()).toBe(true);
+    });
+
+    it('parses OR with a lower precedence than equality', function() {
+        expect(parse('1 === 2 || 2 === 2')()).toBeTruthy();
+    });
+
+    it('parses the ternary expression', function() {
+        expect(parse('a === 42 ? true : false')({a: 42})).toBe(true);
+        expect(parse('a === 42 ? true : false')({a: 43})).toBe(false);
+    });
+
+    it('parses OR with a higher precedence than ternary', function() {
+        expect(parse('0 || 1 ? 0 || 2 : 0 || 3')()).toBe(2);
+    });
+
+    it('parses nested ternaries', function() {
+        expect(
+            parse('a === 42 ? b === 42 ? "a and b" : "a" : c === 42 ? "c" : "none"')({
+                a: 44,
+                b: 43,
+                c: 42
+            }))
+        .toEqual('c');
+    });
+
+    it('parses parentheses altering precedence order', function() {
+        expect(parse('21 * (3 - 1)')()).toBe(42);
+        expect(parse('false && (true || true)')()).toBe(false);
+        expect(parse('-((a % 2) === 0 ? 1 : 2)')({a: 42})).toBe(-1);
+    });
+
+    it('parses several statement', function() {
+        var fn = parse('a = 1; b = 2; c = 3');
+        var scope = {};
+        fn(scope);
+        expect(scope).toEqual({a: 1, b: 2, c: 3});
+    });
 
 
 
